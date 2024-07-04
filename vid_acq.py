@@ -4,9 +4,16 @@ import numpy as np
 import socket
 import os
 import time
-from PyQt5.QtWidgets import QApplication, QWidget, QLabel, QPushButton, QVBoxLayout, QFileDialog
-from PyQt5.QtCore import QTimer, QThread, pyqtSignal
+import pickle
+from PyQt5.QtWidgets import QApplication, QWidget, QLabel, QPushButton, QVBoxLayout, QFileDialog, QDesktopWidget
+from PyQt5.QtCore import QTimer, QThread, pyqtSignal, Qt
 from PyQt5.QtGui import QImage, QPixmap
+
+# Configurable variables
+UDP_LISTEN_PORT = 12345
+DATA_ROOT = 'C://Users//ranso//Videos//'  # Change as needed to your data root
+ASPECT_RATIO = 4 / 3  # Assuming aspect ratio of the cameras is 4:3
+CAMERAS = [1,0]  # List of camera indices to acquire and in what order
 
 class DummyArduino:
     def write(self, data):
@@ -15,7 +22,7 @@ class DummyArduino:
 class UDPListener(QThread):
     udp_signal = pyqtSignal(str)
     
-    def __init__(self, port=12345):
+    def __init__(self, port=UDP_LISTEN_PORT):
         super().__init__()
         self.port = port
         self.running = True
@@ -45,10 +52,10 @@ class UDPListener(QThread):
 class CameraApp(QWidget):
     def __init__(self):
         super().__init__()
-        self.data_root = 'C://Users//ranso//Videos//'  # Change as needed to your data root
+        self.data_root = DATA_ROOT
+        self.cameras = CAMERAS
         self.initUI()
-        self.capture1 = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-        self.capture2 = cv2.VideoCapture(1, cv2.CAP_DSHOW)
+        self.captures = [cv2.VideoCapture(cam, cv2.CAP_DSHOW) for cam in self.cameras]
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_frame)
         self.timer.start(30)
@@ -57,6 +64,9 @@ class CameraApp(QWidget):
         self.final_filename = None
         self.last_time = time.time()
         self.fps = 0
+        self.frame_data = {'frame_count': 0, 'frame_times': []}
+        self.experiment_id = None
+        self.acquisition_start_time = None
 
         self.udp_listener = UDPListener()
         self.udp_listener.udp_signal.connect(self.handle_udp_message)
@@ -68,6 +78,7 @@ class CameraApp(QWidget):
             self.arduino = serial.Serial('COM3', 9600)
         except (ImportError, serial.SerialException):
             self.arduino = DummyArduino()
+        self.arduino.write(b'L')  # Set Arduino to low at startup
 
     def initUI(self):
         self.image_label = QLabel(self)
@@ -80,20 +91,44 @@ class CameraApp(QWidget):
         self.setLayout(layout)
         
         self.setWindowTitle('Dual Camera Capture')
-        self.setGeometry(100, 100, 800, 600)
-        self.setMinimumSize(400, 300)
+        self.resize_window()
         self.show()
 
+    def resize_window(self):
+        screen_rect = QDesktopWidget().screenGeometry()
+        screen_height = int(screen_rect.height() * 0.8)  # Make the window 20% smaller
+        screen_width = int(screen_rect.width() * 0.8)  # Make the window 20% smaller
+
+        num_cameras = len(self.cameras)
+        aspect_ratio = ASPECT_RATIO
+
+        # Calculate the appropriate height while respecting aspect ratio
+        window_height = screen_height // num_cameras
+        window_width = int(window_height * aspect_ratio)
+
+        if window_width > screen_width:
+            window_width = screen_width
+            window_height = int(window_width / aspect_ratio)
+
+        window_height *= num_cameras  # Account for the number of cameras stacked vertically
+
+        self.setGeometry(int((screen_rect.width() - window_width) // 2),
+                         int((screen_rect.height() - window_height) // 2),
+                         int(window_width), int(window_height))
+
+        print(f"Window dimensions: {window_width}x{window_height}")
+
     def update_frame(self):
-        ret1, frame1 = self.capture1.read()
-        ret2, frame2 = self.capture2.read()
+        frames = []
+        for capture in self.captures:
+            ret, frame = capture.read()
+            if ret:
+                frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                frames.append(frame_gray)
 
-        if ret1 and ret2:
-            frame1_gray = cv2.cvtColor(frame1, cv2.COLOR_BGR2GRAY)
-            frame2_gray = cv2.cvtColor(frame2, cv2.COLOR_BGR2GRAY)
-
-            frame1_resized, frame2_resized = self.resize_frames(frame1_gray, frame2_gray)
-            combined_frame = np.vstack((frame1_resized, frame2_resized))
+        if len(frames) == len(self.captures):
+            resized_frames = [self.resize_with_aspect_ratio(frame, 640, 480) for frame in frames]
+            combined_frame = np.vstack(resized_frames)
 
             # Update the FPS calculation
             current_time = time.time()
@@ -105,29 +140,40 @@ class CameraApp(QWidget):
             
             # Overlay the FPS and status text on the display frame
             display_frame = cv2.putText(display_frame, f'FPS: {self.fps:.2f}', (10, 30), 
-                                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2, cv2.LINE_AA)
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
             status_text = "RECORDING" if self.recording else "IDLE"
             status_color = (0, 0, 255) if self.recording else (0, 255, 0)
-            display_frame = cv2.putText(display_frame, status_text, (10, 60), 
-                                        cv2.FONT_HERSHEY_SIMPLEX, 1, status_color, 2, cv2.LINE_AA)
+            display_frame = cv2.putText(display_frame, status_text, (10, 50), 
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, status_color, 1, cv2.LINE_AA)
+
+            if self.recording and self.experiment_id:
+                display_frame = cv2.putText(display_frame, f'Experiment ID: {self.experiment_id}', (10, 70), 
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+                elapsed_time = time.time() - self.acquisition_start_time
+                elapsed_time_str = time.strftime("%H:%M:%S", time.gmtime(elapsed_time)) + f":{int((elapsed_time % 1) * 100):02d}"
+                display_frame = cv2.putText(display_frame, f'Elapsed Time: {elapsed_time_str}', (10, 90), 
+                                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+                
+                if self.frame_count >= 100:
+                    interframe_intervals = np.diff(self.frame_data['frame_times'][-100:])
+                    if len(interframe_intervals) > 0:
+                        avg_interframe_interval = np.mean(interframe_intervals) * 1000  # Convert to milliseconds
+                        std_interframe_interval = np.std(interframe_intervals) * 1000  # Convert to milliseconds
+                        display_frame = cv2.putText(display_frame, 
+                                                    f'Avg Interframe: {avg_interframe_interval:.2f}ms +/- {std_interframe_interval:.2f}ms', 
+                                                    (10, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
 
             self.display_image(display_frame)
             
             if self.recording:
                 self.out.write(combined_frame)
                 self.frame_count += 1
-                if self.frame_count % 10 == 0:
+                self.frame_data['frame_count'] = self.frame_count
+                frame_time = current_time - self.start_time
+                self.frame_data['frame_times'].append(frame_time)
+                if self.frame_count % 100 == 0:
                     self.toggle_arduino_output()
 
-    def resize_frames(self, frame1, frame2):
-        # Resize frames to a common size, maintaining aspect ratio and padding with black borders if necessary
-        target_width = 640  # Change as needed
-        target_height = 480  # Change as needed
-
-        frame1_resized = self.resize_with_aspect_ratio(frame1, target_width, target_height)
-        frame2_resized = self.resize_with_aspect_ratio(frame2, target_width, target_height)
-
-        return frame1_resized, frame2_resized
 
     def resize_with_aspect_ratio(self, image, width, height, inter=cv2.INTER_AREA):
         h, w = image.shape[:2]
@@ -163,6 +209,9 @@ class CameraApp(QWidget):
             self.recording = False
             self.record_button.setText('Start Recording')
             self.out.release()
+            self.save_frame_data()
+            self.arduino.write(b'L')  # Set Arduino to low after stopping recording
+            self.experiment_id = None
         else:
             options = QFileDialog.Options()
             options |= QFileDialog.DontUseNativeDialog
@@ -176,31 +225,49 @@ class CameraApp(QWidget):
         self.recording = True
         self.record_button.setText('Stop Recording')
         self.final_filename = filename
-        ret1, frame1 = self.capture1.read()  # Get the frame size
-        ret2, frame2 = self.capture2.read()  # Get the frame size
-        if ret1 and ret2:
-            frame1_gray = cv2.cvtColor(frame1, cv2.COLOR_BGR2GRAY)
-            frame2_gray = cv2.cvtColor(frame2, cv2.COLOR_BGR2GRAY)
-            frame1_resized, frame2_resized = self.resize_frames(frame1_gray, frame2_gray)
-            height, width = frame1_resized.shape  # Assuming both frames have the same size after resizing
+        frames = []
+        for capture in self.captures:
+            ret, frame = capture.read()
+            if ret:
+                frames.append(frame)
+        if len(frames) == len(self.captures):
+            resized_frames = [self.resize_with_aspect_ratio(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), 640, 480) for frame in frames]
+            height, width = resized_frames[0].shape  # Assuming all frames have the same size after resizing
+            combined_height = height * len(self.captures)
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            self.out = cv2.VideoWriter(self.final_filename, fourcc, 20.0, (width, height * 2), isColor=False)
+            self.out = cv2.VideoWriter(self.final_filename, fourcc, 20.0, (width, combined_height), isColor=False)
+            self.frame_data = {'frame_count': 0, 'frame_times': []}
+            self.start_time = time.time()
+            self.acquisition_start_time = time.time()
+            self.arduino.write(b'L')  # Set Arduino to low at the start of recording
 
     def handle_udp_message(self, message):
-        if message.lower() == "stop":
+        command = message[:4]
+        experiment_id = message[5:]
+        if command == "STOP":
             if self.recording:
                 self.toggle_recording()
-        else:
-            self.start_recording(message)
+        elif command == "GOGO":
+            self.experiment_id = experiment_id
+            save_dir = os.path.join(self.data_root, experiment_id[-7:], experiment_id)
+            os.makedirs(save_dir, exist_ok=True)
+            filename = os.path.join(save_dir, f"{experiment_id}_eye1.mp4")
+            self.start_recording(filename)
 
     def toggle_arduino_output(self):
         self.arduino.write(b'T')  # Dummy command to toggle digital output
 
+    def save_frame_data(self):
+        if self.final_filename:
+            meta_filename = self.final_filename.replace('_eye1.mp4', '_eyeMeta1.pickle')
+            with open(meta_filename, 'wb') as f:
+                pickle.dump(self.frame_data, f)
+
     def closeEvent(self, event):
         self.timer.stop()
         self.udp_listener.stop()
-        self.capture1.release()
-        self.capture2.release()
+        for capture in self.captures:
+            capture.release()
         if self.recording:
             self.out.release()
         if hasattr(self.arduino, 'close'):

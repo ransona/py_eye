@@ -11,4 +11,4 @@ if __name__ == "__main__":
     udp_command = 'GOGO'
     send_udp_message(udp_command+'*'+expID)  # Start recording
     input("Press Enter to stop recording...")
-    send_udp_message("stop")  # Stop recording
+    send_udp_message("STOP")  # Stop recording
