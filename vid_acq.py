@@ -10,10 +10,10 @@ from PyQt5.QtCore import QTimer, QThread, pyqtSignal, Qt
 from PyQt5.QtGui import QImage, QPixmap
 
 # Configurable variables
-UDP_LISTEN_PORT = 12345
-DATA_ROOT = 'C://Users//ranso//Videos//'  # Change as needed to your data root
+UDP_LISTEN_PORT = 1813
+DATA_ROOT = 'C://local_repository//'  # Change as needed to your data root
 ASPECT_RATIO = 4 / 3  # Assuming aspect ratio of the cameras is 4:3
-CAMERAS = [1,0]  # List of camera indices to acquire and in what order
+CAMERAS = [0,1,2]  # List of camera indices to acquire and in what order
 
 class DummyArduino:
     def write(self, data):
@@ -249,7 +249,7 @@ class CameraApp(QWidget):
                 self.toggle_recording()
         elif command == "GOGO":
             self.experiment_id = experiment_id
-            save_dir = os.path.join(self.data_root, experiment_id[-7:], experiment_id)
+            save_dir = os.path.join(self.data_root, experiment_id[14:], experiment_id)
             os.makedirs(save_dir, exist_ok=True)
             filename = os.path.join(save_dir, f"{experiment_id}_eye1.mp4")
             self.start_recording(filename)
