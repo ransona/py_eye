@@ -12,9 +12,10 @@ from PyQt5.QtGui import QImage, QPixmap
 # Configurable variables
 UDP_LISTEN_PORT = 1813
 DATA_ROOT = 'C://local_repository//'  # Change as needed to your data root
-CAMERAS = [0, 1]  # List of camera indices to acquire and in what order
+CAMERAS = [0, 1,2]  # List of camera indices to acquire and in what order
 ARDUINO_PORT = 'COM4'  # Change as needed to your Arduino port
-VID_HEIGHT = 300
+VID_HEIGHT = 350
+DESIRED_FPS = 30
 
 class DummyArduino:
     def write(self, data):
@@ -57,9 +58,14 @@ class CameraApp(QWidget):
         self.cameras = CAMERAS
         self.initUI()
         self.captures = [cv2.VideoCapture(cam, cv2.CAP_DSHOW) for cam in self.cameras]
+
+        # Set the frame rate for each camera and print actual frame rates
+        for i, capture in enumerate(self.captures):
+            capture.set(cv2.CAP_PROP_FPS, DESIRED_FPS)
+
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_frame)
-        self.timer.start(30)
+        self.timer.start(int(1000 / DESIRED_FPS))
         self.recording = False
         self.frame_count = 0
         self.final_filename = None
@@ -76,7 +82,8 @@ class CameraApp(QWidget):
         # Arduino setup
         try:
             import serial
-            self.arduino = serial.Serial('COM3', 9600)
+            self.arduino = serial.Serial(ARDUINO_PORT, 9600)
+            print('Arduino detected')
         except (ImportError, serial.SerialException):
             self.arduino = DummyArduino()
         self.arduino.write(b'L')  # Set Arduino to low at startup
