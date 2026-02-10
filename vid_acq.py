@@ -12,7 +12,7 @@ from PyQt5.QtGui import QImage, QPixmap
 # Configurable variables
 UDP_LISTEN_PORT = 1813
 DATA_ROOT = 'C://local_repository//'  # Change as needed to your data root
-CAMERAS = [0, 1]  # List of camera indices to acquire and in what order
+CAMERAS = [2,1,0]  # List of camera indices to acquire and in what order
 ARDUINO_PORT = 'COM4'  # Change as needed to your Arduino port
 DESIRED_FPS = 30
 
