@@ -81,6 +81,7 @@ class CameraApp(QWidget):
         self.frame_data = {'frame_count': 0, 'frame_times': []}
         self.experiment_id = None
         self.acquisition_start_time = None
+        self.debug_t0 = None
 
         self.udp_listener = UDPListener()
         self.udp_listener.udp_signal.connect(self.handle_udp_message)
@@ -234,6 +235,8 @@ class CameraApp(QWidget):
             if self.recording:
                 self.toggle_recording()
         elif command == "GOGO":
+            self.debug_t0 = time.time()
+            print(f"[DEBUG] UDP GOGO received: t=0.000s, experiment_id={experiment_id}")
             self.experiment_id = experiment_id
             save_dir = os.path.join(self.data_root, experiment_id[14:], experiment_id)
             os.makedirs(save_dir, exist_ok=True)
@@ -242,6 +245,11 @@ class CameraApp(QWidget):
 
     def toggle_arduino_output(self):
         self.arduino.write(b'T')  # Dummy command to toggle digital output
+        if self.debug_t0 is not None:
+            elapsed = time.time() - self.debug_t0
+            print(f"[DEBUG] Digital output toggled: t={elapsed:.3f}s, frame={self.frame_count}")
+        else:
+            print(f"[DEBUG] Digital output toggled: t=NA (no UDP GOGO), frame={self.frame_count}")
 
     def save_frame_data(self):
         if self.final_filename:
