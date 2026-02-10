@@ -220,6 +220,7 @@ class CameraApp(QWidget):
         self.recording = True
         self.record_button.setText('Stop Recording')
         self.final_filename = filename
+        self.frame_count = 0
         height, width = SAVE_HEIGHT, SAVE_WIDTH * 3  # Combined width for 3 cameras
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         self.out = cv2.VideoWriter(self.final_filename, fourcc, 20.0, (width, height), isColor=False)
